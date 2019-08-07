@@ -1,0 +1,228 @@
+#################################### UNITS
+#
+# time = minute
+# length = micron
+# energy = ? not really sure
+
+log none
+echo none
+
+
+################################################################################################################
+#
+#
+#				LINES TO CHANGE BETWEEN EXPLICITY EPS AND ATTRACTION
+#
+#
+#
+#
+variable	USE_EPS			equal	0  #0 means we use eps (PIN), 1 we do not use (PACO)
+variable	NumBondFreeze		equal 	5 # a bacterium with this many bonds freezes (no dynamics, no growth, but still thermal motion)
+
+#distance (in unit of sigma) at which we cut the LJ interaction between LJ particles of a bacterium
+#this is 2^(1.0/6.0) if we only have repuslion
+variable	CUTOFF_FACTOR		equal	1.12246204830937 # = 2^{1.0/6.0} #PIN
+#variable	CUTOFF_FACTOR		equal	???? #PACO
+
+
+variable	USE_WALL			equal	0 #no wall at the boundary
+
+################################################################################################################
+
+
+
+######### timescales in seconds
+variable	t_run			equal   0.05 #time constant of an exponential distribution
+variable	t_tumble		equal   0.2 #time constant of an exponential distribution
+variable	t_adhesion		equal	120 #minutes time constant an exponential distribution; after this time, motility is suppressed 
+variable	total_simulation_time	equal	2000
+variable	t_reproduction		equal	60 #minutes
+variable	time_dump		equal	1
+
+variable	splitting_check_interval		equal	1 #every .. we allow for the splitting of the molecules; this is a costly operation
+
+## attempt the creation of bond every this timestep; bonds are created with probability 1
+variable	t_eps			equal   1 # timescale for production of eps ############## NO POINT HAVING IT SMALLER THAN splitting_check_interval
+variable	t_bond			equal	1 # make the bonds with probab 1 every this time
+
+variable	prob_bond12		equal	1.0
+
+
+#variable	t_therma		equal	10 ## this is the time an EPS partice travelling with the thermal velocity sqrt(2T/m) takes to travel a distance equal to the bacterium length; we use this to fix the mass of the eps particles
+variable	t_therma		equal	0.1 ## this is the time an EPS partice traveling with the thermal velocity sqrt(2T/m) takes to travel a distance equal to the bacterium length; we use this to fix the mass of the eps particles
+variable	Temperature		equal	0.2*0.01 ## temperature, where eps_LJ = 1
+
+#########
+variable        velocity         equal  1.5*(${t_run}+${t_tumble})/${t_run} # linear velocity of the particle when in the run state; it moves of ~ 3mu^2 in 100s = (v*2)^2 = 2 v = sqrt(3)/100 = 0.017
+variable        angularvelocity  equal  1*(${t_run}+${t_tumble})/${t_tumble} # angular velocity of the bacterium when in the tumbling state
+
+
+
+#variable        velocity         equal  0.00001
+#variable        angularvelocity  equal  0.00001
+
+
+##### physical parameters
+variable	Diameter	equal	0.6 #microns #this is the cutoff of the potential 
+variable	aspect_ratio	equal	3
+variable	LL		equal	${Diameter}*${aspect_ratio} #length of molecule
+variable	Lbox		equal 	200*${Diameter}
+variable	MassEps		equal	2*${Temperature}*(${t_therma}/${LL})^2
+
+#this is the number of atoms we use to construct a bacterium; 
+variable        NumAtomMolecule equal 11
+
+#zoom factor for dump image
+variable	zoom	equal	1
+
+#dimensionality
+variable	dimension	equal	2
+dimension	${dimension}
+#boundary conditions
+if "${USE_WALL} == 0" then "boundary	p p p" else "boundary	f f p" 
+#boundary	f f p
+atom_style	molecular
+#neighbor - neighbor list are build up to a distance = cutoff+neighbor; important that distance<cutoff of delate atom
+neighbor	1.5 bin
+
+## the index of a bacterium, is the index of its father - we can track the genealogy
+## if we start with a single bacterium, then all indexes are equal 
+## this parameter is currently used to select the color of the molecules in the dump image command
+fix ADDindex all property/atom i_index ghost yes
+compute Cindex all property/atom i_index
+
+#lattice and units
+lattice		sq	1
+units 		lj
+#integration timestep
+variable	dt_integration	equal	0.005
+#variable	dt_integration	equal	0.002
+timestep  	${dt_integration}
+
+variable	max_displacement_one_step	equal	${dt_integration}*1.5*(${t_run}+${t_tumble})/${t_run}*2
+
+#reproduction parameters
+variable	timestep_dump	equal	${time_dump}/${dt_integration}
+variable	total_simulation_steps equal ${total_simulation_time}/${dt_integration}
+variable	timestep_bond	equal	${t_bond}/${dt_integration}
+
+#simulation region
+variable	NbondType	equal	3
+region 	SimRegion block 0 ${Lbox} 0 ${Lbox} 0 ${Lbox}
+create_box 2 SimRegion bond/types ${NbondType} angle/types 1 extra/bond/per/atom 50 extra/angle/per/atom 4 extra/special/per/atom 300
+
+##motility parameters
+variable	epsilon	equal 1  # energy scale of the inteaction potential
+
+#variable        viscosity       equal   0.1
+variable        viscosity       equal   100
+variable        Frun            equal   ${viscosity}*${velocity} #the force is applied to every atom of the molecule, the force is such that the velocity of the molecule is fixed to the desired value, in the absence of interactions
+variable        Torque          equal   ${angularvelocity}*${viscosity}
+
+## interaction between the monomers - currently a WCA potential
+#bacterium body
+variable        eps11          	equal   ${epsilon}
+variable        sigma11        	equal   1.0/(2^(1.0/6.0))*${Diameter}
+variable        cut11          	equal   ${sigma11}*${CUTOFF_FACTOR}
+#eps
+variable        eps22          	equal   ${epsilon}*0.01
+variable        sigma22        	equal   1.0/(2^(1.0/6.0))*${Diameter}/2.0
+#variable        cut22          	equal   ${sigma22}*2^(1.0/6) #we cat after the minimum, so that we have an attractive interaction between the eps particles
+variable        cut22          	equal   ${sigma22}*2.5 #we cat after the minimum, so that we have an attractive interaction between the eps particles
+#body-eps
+variable        eps12          	equal   ${epsilon}*0.01
+#variable        sigma12         equal   0.5*(${sigma11}+${sigma22})
+variable        sigma12         equal   0.5*${sigma11}+${sigma22}
+#variable        cut12          	equal   ${sigma12}*2^(1.0/6) ## attraction eps body
+variable        cut12          	equal   ${sigma12}*2.5 ## attraction eps body
+
+pair_style 	lj/cut/opt ${cut11} 
+pair_coeff      1 1 ${eps11} ${sigma11} ${cut11}
+pair_coeff      2 2 ${eps22} ${sigma22} ${cut22}
+pair_coeff      1 2 ${eps12} ${sigma12} ${cut12}
+pair_modify shift yes
+
+#to check the used interaction
+#pair_write 1 1 5000 r 0.5 3 table_11.txt LJ
+
+## bond parameters
+#variable	K_angle	equal	${epsilon}*500 #with this value particles effectively do not bend
+#variable	K_angle	equal	${epsilon}*20 #with this value particles effectively do not bend
+variable	K_angle	equal	${epsilon}*100
+
+mass    	1       1.0/${NumAtomMolecule}
+mass    	2       ${MassEps}
+variable	communicate_cutoff	equal	2
+comm_style	brick
+comm_modify 	cutoff	${communicate_cutoff}
+
+thermo_style	custom step atoms pe ke press
+thermo		1000
+
+variable	nbond_type	equal	1
+variable	bond_stretching	equal	1.02
+variable	K_bond	equal	20*${epsilon}
+#variable	K_bond	equal	${Frun}/(${Diameter}/20) # the running force can only minimally strecth the bacterium
+#variable	K_bacterium	equal	200*${epsilon}
+variable	K_bacterium	equal	${Frun}/(${Diameter}/20) # the running force can only minimally strecth the bacterium
+
+############################################################
+#bond_style hybrid harmonic/intel fene
+bond_style harmonic
+special_bonds fene
+# this special bonds setting is going to generate a worning, but we know what we are doing
+# intra molecule interaction are toruned off, so this is ok
+# if we don't find the special_bonds this way, then cluster of eps molecules collapse easily
+#there will be no bonds of this type
+variable	BondType11	equal	${nbond_type}
+bond_coeff 	${nbond_type}   0 1
+
+variable	nbond_type	equal	${nbond_type}+1
+variable	L_bond		equal	${cut12}
+bond_coeff 	${nbond_type}   ${K_bond} ${L_bond}
+variable	BondType12	equal	${nbond_type}
+
+variable	nbond_type	equal	${nbond_type}+1
+variable	BondType22	equal	${nbond_type}
+variable	L_bond		equal	${cut22}
+bond_coeff 	${nbond_type}   ${K_bond} ${L_bond}
+
+variable	theta_angle	equal	180
+angle_style harmonic
+angle_coeff 1 ${K_angle} ${theta_angle}
+
+#variable	Frun equal 0
+#variable	Torque equal 0
+
+variable	vel	atom (vx*vx+vy*vy)^0.5
+variable	PE	equal	pe
+variable	TimeStep	equal	step
+
+
+group bact type 1
+compute ctype1 bact property/atom type
+compute ntype1 all reduce sum c_ctype1
+variable num_bacteria equal c_ntype1/${NumAtomMolecule}
+
+group eps type 2
+compute ctype2 eps property/atom type
+compute ntype2 all reduce sum c_ctype2
+variable num_eps equal c_ntype2
+
+
+variable elapsed_time equal ${dt_integration}*step
+
+#remember to add the zwall in 3d
+#fix walls all wall/reflect xhi EDGE ylo EDGE yhi EDGE zlo EDGE zhi EDGE
+
+## epsion bottom wall interaction
+variable eps_wall equal	100*${Temperature}
+variable        cut2_wall      	equal   ${sigma22}*2^(1.0/6.0)
+variable        cut1_wall      	equal   ${sigma22}*2^(1.0/6.0)
+
+if "${USE_WALL} == 1" then "fix wall_low1 bact wall/lj93 xlo EDGE ${eps_wall} ${sigma11} ${cut1_wall} xhi EDGE ${eps_wall} ${sigma11} ${cut1_wall} ylo EDGE ${eps_wall} ${sigma11} ${cut1_wall} yhi EDGE ${eps_wall} ${sigma11} ${cut1_wall}"
+if "${USE_WALL} == 1" then "fix wall_low2 eps  wall/lj93 xlo EDGE ${eps_wall} ${sigma22} ${cut2_wall} xhi EDGE ${eps_wall} ${sigma22} ${cut2_wall} ylo EDGE ${eps_wall} ${sigma22} ${cut2_wall} yhi EDGE ${eps_wall} ${sigma22} ${cut2_wall}"
+
+#this is the region where the eps particle jam
+#region  BlockRegion block 0 ${Lbox} 0 ${Lbox} 0 0.2
+variable NumFrozen equal 0
